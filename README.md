@@ -33,8 +33,13 @@ skip_collections = C1234567-DAAC,C765432-DAAC,C55555555-DAAC
 
 More complex CMR search filtering parameters (get params):
 ```
-collection_filter = provider=ASF
+collection_filter = provider=DAAC
 ```
+
+### Lambda Config
+Lambda IAM: It is imporant to use an IAM role capable of calling SNS
+
+Lambda Timeout: Downloads take time, the default timeout may not be long enough to run all your downloads!
 
 ### Create a Cloudwatch Event
 Set up a scheduled event to run the lambda at whatever periodicity you desire 

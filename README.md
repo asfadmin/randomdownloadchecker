@@ -37,7 +37,7 @@ collection_filter = provider=DAAC
 ```
 
 ### Lambda Config
-Lambda IAM: It is imporant to use an IAM role capable of calling SNS
+Lambda IAM: It is imporant to use an IAM role capable of calling SNS. It would probably be easiest to start with a BasicExecution Lambda policy and add `sns:Publish`.
 
 Lambda Timeout: Downloads take time, the default timeout may not be long enough to run all your downloads!
 

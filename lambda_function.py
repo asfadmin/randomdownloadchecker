@@ -4,25 +4,27 @@ from contextlib import redirect_stdout
 import boto3
 
 # from download script
+#pylint: disable=unused-import
 import base64, time, ssl, xml.etree.ElementTree as ET, shutil
 from urllib.request import build_opener, install_opener, Request, urlopen
 from urllib.request import HTTPHandler, HTTPSHandler, HTTPCookieProcessor
 from urllib.error import HTTPError, URLError
 from http.cookiejar import MozillaCookieJar
+#pylint: enable=unused-import
 
 def get_url(req_url):
     return urllib.request.urlopen( req_url ).read().decode('utf-8')
-    
+
 def send_sns(message, subject='Downoad Test Failure'):
     client = boto3.client('sns')
-    response = client.publish(TopicArn=os.getenv('sns_arn'),Message=message,Subject=subject)
-    
-def lambda_handler(event, context):
+    client.publish(TopicArn=os.getenv('sns_arn'),Message=message,Subject=subject)
+
+def lambda_handler(event, context): 				#pylint: disable=unused-argument
     cmr_api = os.getenv('cmr_api')
     cmr_coll_url = '{0}/search/collections.json?{1}&page_size=1000'.format(cmr_api,os.getenv('collection_filter'))
     cmr_gran_cnt_url = '{0}/search/granules?page_size=1&collection_concept_id='.format(cmr_api)
     cmr_gran_url = '{0}/search/granules.json?page_size=5&collection_concept_id='.format(cmr_api)
-    
+
     try:
         # query CMR for collections, then grab the URLS from some random granules
         granule_url_set = []
@@ -30,35 +32,35 @@ def lambda_handler(event, context):
         collections = json.loads(get_url ( cmr_coll_url ) )
         collections = [d['id'] for d in collections['feed']['entry']]
         random.shuffle(collections)
-        
+
         #  Loop over randomized collections
         for collection in collections:
-            # Skip Dynamic Products, they trigger deglaciation or have no size param 
+            # Skip Dynamic Products, they trigger deglaciation or have no size param
             if collection in os.getenv('skip_collections').split(','):
                 print('Skipping dynamic collection: {0}'.format(collection))
                 continue
-            
-            # grab the hit count for the collection 
+
+            # grab the hit count for the collection
             coll_count_xml = get_url ( cmr_gran_cnt_url+collection )
             cnt = int(re.findall(r'\<hits\>(\d+)\<\/hits\>', coll_count_xml)[0])
-         
+
             # Only sample large collections
             if cnt > 10000:
                 print ("   ... collection {0} has {1} granule ... ".format(collection, cnt))
-                for z in [1,2]:
+                for _ in [1,2]:
                     # Pick 2 random pages of 5 granules from the collection
                     page_num = random.randint(1, int(cnt/5))
                     gran_url = cmr_gran_url + "{0}&page_num={1}".format(collection, page_num)
-        
+
                     # Grab the granule metadata as JSON
                     gran_json = json.loads(get_url(gran_url))
-                    
+
                     # Make sure data has "granule_size" attribute
                     incomplete_records = len([d for d in gran_json['feed']['entry'] if 'granule_size' not in d])
                     if incomplete_records:
                         print ("Found {0} records without granule_size in collection {1}".format(incomplete_records, collection))
-        
-                    # Randomly select 1 href from the links 
+
+                    # Randomly select 1 href from the links
                     for link_list in [d['links'] for d in gran_json['feed']['entry'] if 'granule_size' in d and float(d['granule_size']) <= 300 ]:
                         hrefs = [d['href'] for d in link_list if 'inherited' not in d ]
                         random_file = random.choice(hrefs)
@@ -66,33 +68,32 @@ def lambda_handler(event, context):
                         if random_file not in granule_url_set:
                             # This is our download!
                             granule_url_set.append(random_file)
-        
-            # stop after we've found 200 "random granules" 
+
+            # stop after we've found 200 "random granules"
             if len ( granule_url_set ) >= 200:
                 print ( "... Found enough granules... ")
                 break
-        
+
         # Choose 20 of the random 200!
         products = random.choices( granule_url_set, k=20)
-        
+
         # Fake U:P Info
         print ("... Faking input.... ")
         username = os.getenv('urs_user')
         password = os.getenv('urs_pass')
         sys.stdin = io.StringIO("{0}\n{1}\n".format(username, password))
-        
-        
+
         # Download Bulk Download SCirpt
-        url = 'https://bulk-download.asf.alaska.edu/?products=' 
+        url = 'https://bulk-download.asf.alaska.edu/?products='
         print ("... Getting download script ... ")
         products_encoded = urllib.parse.quote(",".join(products))
         code = get_url ( url+products_encoded )
-        
+
         #### Change various pieces of the download script to work in lambda
         # Change input for U:
         code = re.sub( r'raw_input\(\"Username.*\)', 'sys.stdin.readline().rstrip()', code)
         code = re.sub( r'getpass\.getpass\(.*\"\)', 'sys.stdin.readline().rstrip()', code)
-        # Fix bad vertex link, this should be fixed eventually. ASF specific download token. 
+        # Fix bad vertex link, this should be fixed eventually. ASF specific download token.
         code = re.sub( r'vertex\.daac\.asf\.alaska\.edu', 'vertex-retired.daac.asf.alaska.edu', code)
         # Trick code into running automagically
         code = re.sub( r'if __name__ \=\= \"__main__\"\:', 'if True:', code)
@@ -105,22 +106,22 @@ def lambda_handler(event, context):
         code = re.sub( r'if file_size is None', "os.remove(download_file)\n       if file_size is None", code)
         # Fix a potential 401 bug?
         code = re.sub( r'with open\(tempfile_name\, \'r\'\) as myfile', "try:\n                 tempfile_name\n             except NameError:\n                 return False,None\n             with open(tempfile_name, 'r') as myfile", code)
-        
+
         # move into a temp dir:
         rundir = tempfile.gettempdir()+"/dl"
         if os.path.isdir(rundir):
-            shutil.rmtree(rundir)  
+            shutil.rmtree(rundir)
         os.makedirs(rundir)
         os.chdir(rundir)
-        
+
         #  Call the download summary and capture output
         print ("... Attempting downloads ...")
-        
+
         with io.StringIO() as buf, redirect_stdout(buf):
-            exec(code)
+            exec(code) 								#pylint: disable=exec-used
             out_text = buf.getvalue()
             shutil.rmtree(rundir)
-            
+
         # Split by newline + carriage return
         lines = re.split("[\r\n]", out_text)
         # Find the failures:
@@ -130,7 +131,7 @@ def lambda_handler(event, context):
             if "Download Summary" in lines[0]:
                 # We hit the summary
                 break
-            
+
             # Add it to scrollback
             next_line = lines.pop(0)
             scrollback.append(next_line)
@@ -142,7 +143,7 @@ def lambda_handler(event, context):
                 for l in scrollback:
                     error_lines.append(l)
                 scrollback = []
-        
+
         # Find the the download report
         while True:
             if "Download Summary" in lines.pop(0):
@@ -163,7 +164,7 @@ def lambda_handler(event, context):
         raise (E)
 
     # Remove run environment
-    shutil.rmtree(rundir)    
+    shutil.rmtree(rundir)
     return(False)
 
-    
+

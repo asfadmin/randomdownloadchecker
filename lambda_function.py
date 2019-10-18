@@ -13,7 +13,16 @@ from http.cookiejar import MozillaCookieJar
 #pylint: enable=unused-import
 
 def get_url(req_url):
-    return urllib.request.urlopen( req_url ).read().decode('utf-8')
+    try:
+        resp = urllib.request.urlopen( req_url ).read().decode('utf-8')
+        return resp
+    except urllib.error.HTTPError as E:
+        raise ValueError('HTTPError downloading {0}, code:{1}, reason:{2}\n\nResponse Payload (If any):\n{3}'.format(req_url, E.code, E.reason, E.read().decode('utf-8') )) 
+    except urllib.error.URLError as E:
+        raise ValueError('URLError downloading {0}, reason:{1}; Error: {2}'.format( req_url, E.reason, E ))
+    except Exception as E:
+        raise ValueError('Problem downloading {0}: {1}'.format( req_url, E ))
+
 
 def send_sns(message, subject='Downoad Test Failure'):
     client = boto3.client('sns')
@@ -26,6 +35,7 @@ def lambda_handler(event, context): 				#pylint: disable=unused-argument
     cmr_gran_url = '{0}/search/granules.json?page_size=5&collection_concept_id='.format(cmr_api)
 
     try:
+    
         # query CMR for collections, then grab the URLS from some random granules
         granule_url_set = []
         print ("... Gathering 200+ random granules ....")
@@ -158,6 +168,9 @@ def lambda_handler(event, context): 				#pylint: disable=unused-argument
             print("\n".join(lines))
             send_sns(message="All downloads seemed to be successful!\n\n"+"\n".join(lines), subject="Success!")
             return(True)
+    except ValueError as E:
+        print ("Problem fetching HTTP: {0}".format(E))
+        send_sns(message="Problem fetching HTTP: {0}".format(E), subject="HTTP Error!")
     except Exception as E:
         print ("problem running code: {0}".format(E))
         send_sns(message="problem running code: {0}".format(E), subject="Error!")

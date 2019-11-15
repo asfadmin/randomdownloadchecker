@@ -71,12 +71,18 @@ def lambda_handler(event, context): 				#pylint: disable=unused-argument
                         print ("Found {0} records without granule_size in collection {1}".format(incomplete_records, collection))
 
                     # Randomly select 1 href from the links
-                    for link_list in [d['links'] for d in gran_json['feed']['entry'] if 'granule_size' in d and float(d['granule_size']) <= 300 ]:
-                        hrefs = [d['href'] for d in link_list if 'inherited' not in d ]
+                    for rangran in [d for d in gran_json['feed']['entry'] if 'granule_size' in d and float(d['granule_size']) <= 300 ]:
+                        
+                        # Ignore links records from json object that have '(VIEW RELATED INFORMATION)', they come from OnlineResources
+                        hrefs = [l['href'] for l in rangran['links'] if ( 'inherited' not in l and l['rel'] == 'http://esipfed.org/ns/fedsearch/1.1/data#') ]
+                        if not hrefs:
+                            print("... No downloads in {0}".format(rangran))
                         random_file = random.choice(hrefs)
+                        
                         # Make sure we don't do the same file twice!
                         if random_file not in granule_url_set:
                             # This is our download!
+                            print("... adding {0} from {1} in {2} ...".format(random_file, rangran['id'], collection ))
                             granule_url_set.append(random_file)
 
             # stop after we've found 200 "random granules"
@@ -86,6 +92,7 @@ def lambda_handler(event, context): 				#pylint: disable=unused-argument
 
         # Choose 20 of the random 200!
         products = random.choices( granule_url_set, k=20)
+        print ("... Selected the following granules: {0}".format(products))
 
         # Fake U:P Info
         print ("... Faking input.... ")

@@ -5,7 +5,7 @@ import boto3
 
 # from download script
 #pylint: disable=unused-import
-import base64, time, ssl, xml.etree.ElementTree as ET, shutil
+import base64, time, ssl, socket, xml.etree.ElementTree as ET, shutil
 from urllib.request import build_opener, install_opener, Request, urlopen
 from urllib.request import HTTPHandler, HTTPSHandler, HTTPCookieProcessor
 from urllib.error import HTTPError, URLError
@@ -125,7 +125,8 @@ def lambda_handler(event, context): 				#pylint: disable=unused-argument
         code = re.sub( r'with open\(tempfile_name\, \'r\'\) as myfile', "try:\n                 tempfile_name\n             except NameError:\n                 return False,None\n             with open(tempfile_name, 'r') as myfile", code)
 
         # inject a trap timeouts:
-        re.sub( r'       #handle errors', "       #handle errors\n       except socket.timeout as e:\n          print (' > timeout requesting: {0}; {1}'.format(url, e))\n          return False,None\n", code)
+        code = re.sub( r'import signal', "import signal\nimport socket", code)
+        code = re.sub( r'       #handle errors', "       #handle errors\n       except socket.timeout as e:\n          print (' > timeout requesting: {0}; {1}'.format(url, e))\n          return False,None\n", code)
         
         # move into a temp dir:
         rundir = tempfile.gettempdir()+"/dl"

@@ -124,6 +124,9 @@ def lambda_handler(event, context): 				#pylint: disable=unused-argument
         # Fix a potential 401 bug?
         code = re.sub( r'with open\(tempfile_name\, \'r\'\) as myfile', "try:\n                 tempfile_name\n             except NameError:\n                 return False,None\n             with open(tempfile_name, 'r') as myfile", code)
 
+        # inject a trap timeouts:
+        re.sub( r'       #handle errors', "       #handle errors\n       except socket.timeout as e:\n          print (' > timeout requesting: {0}; {1}'.format(url, e))\n          return False,None\n", code)
+        
         # move into a temp dir:
         rundir = tempfile.gettempdir()+"/dl"
         if os.path.isdir(rundir):
@@ -186,5 +189,3 @@ def lambda_handler(event, context): 				#pylint: disable=unused-argument
     # Remove run environment
     shutil.rmtree(rundir)
     return(False)
-
-

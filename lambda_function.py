@@ -2,15 +2,32 @@ import urllib.parse, urllib.request
 import os, sys, io, re, json, random, tempfile
 from contextlib import redirect_stdout
 import boto3
+import copy
 
 # from download script
 #pylint: disable=unused-import
 import base64, time, ssl, socket, xml.etree.ElementTree as ET, shutil
-from urllib.request import build_opener, install_opener, Request, urlopen
+from urllib.request import build_opener, install_opener, Request, urlopen, HTTPRedirectHandler
 from urllib.request import HTTPHandler, HTTPSHandler, HTTPCookieProcessor
 from urllib.error import HTTPError, URLError
 from http.cookiejar import MozillaCookieJar
 #pylint: enable=unused-import
+
+# New Redirect Handler to record end url
+class NewHTTPRedirectHandler(HTTPRedirectHandler):
+   def redirect_request(self, req, fp, code, msg, headers, newurl):
+      m = req.get_method()
+      if (code in (301, 302, 303, 307) and m in ("GET", "HEAD") or code in (301, 302, 303) and m == "POST"):
+         newurl = newurl.replace(' ', '%20')
+         req.last_url = newurl
+
+         # Return copy pointed at new url
+         newreq = copy.copy(req)
+         newreq.full_url = newurl
+         return newreq
+      else:
+         raise HTTPError(req.get_full_url(), code, msg, headers, fp)
+         
 
 def get_url(req_url):
     try:
@@ -128,6 +145,15 @@ def lambda_handler(event, context): 				#pylint: disable=unused-argument
         code = re.sub( r'import signal', "import signal\nimport socket", code)
         code = re.sub( r'       #handle errors', "       #handle errors\n       except socket.timeout as e:\n          print (' > timeout requesting: {0}; {1}'.format(url, e))\n          return False,None\n", code)
         
+        # inject Redirect Handler
+        code = re.sub( r'                 opener \= build_opener\(HTTPCookieProcessor\(self\.cookie_jar\)\,', "                 opener = build_opener(HTTPCookieProcessor(self.cookie_jar),NewHTTPRedirectHandler,", code)
+        code = re.sub( r'return False\,None', "return False,None, request.get_full_url() if not hasattr(request, 'last_url') else request.last_url ", code)
+        code = re.sub( r'size\,total_size', "size,total_size,last_url", code)
+        code = re.sub( r'None\,None', "None,None, request.get_full_url() if not hasattr(request, 'last_url') else request.last_url ", code)
+        code = re.sub( r'False\, None', "False, None, request.get_full_url() if not hasattr(request, 'last_url') else request.last_url ", code)
+        code = re.sub( r'actual_size\,file_size', "actual_size,file_size, request.get_full_url() if not hasattr(request, 'last_url') else request.last_url ", code)
+        code = re.sub( r'There was a problem downloading \{0\}\"\.format\(file_name\)', 'There was a problem downloading {0} @ {1}".format(file_name, last_url)', code)
+        
         # move into a temp dir:
         rundir = tempfile.gettempdir()+"/dl"
         if os.path.isdir(rundir):
@@ -190,3 +216,5 @@ def lambda_handler(event, context): 				#pylint: disable=unused-argument
     # Remove run environment
     shutil.rmtree(rundir)
     return(False)
+
+

@@ -76,7 +76,7 @@ def lambda_handler(event, context): 				#pylint: disable=unused-argument
                 print ("   ... collection {0} has {1} granule ... ".format(collection, cnt))
                 for _ in [1,2]:
                     # Pick 2 random pages of 5 granules from the collection
-                    page_num = random.randint(1, int(cnt/5))
+                    page_num = random.randint(1, min(int(cnt/5),1000))
                     gran_url = cmr_gran_url + "{0}&page_num={1}".format(collection, page_num)
 
                     # Grab the granule metadata as JSON

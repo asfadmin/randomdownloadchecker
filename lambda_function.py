@@ -53,7 +53,7 @@ def simple_download(url):
         return resp.read().decode('utf-8')
     except Exception as E:
         print(f"Could not hit {url}: {E}")
-    return None
+        raise E
 
 
 # for same-host redirects

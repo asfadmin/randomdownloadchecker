@@ -1,32 +1,42 @@
-import os, re, json, random, time
-import boto3, uuid, base64
-
-from urllib import request
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError
+import base64
+import json
+import os
+import random
+import re
+import time
+import uuid
 from http import cookiejar
+from urllib import request
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+import boto3
 
 # Download read chunk size
 READ_CHUNK_SIZE = 16 * 1024 * 1024
 
 # CMR URLS
 cmr_api = os.getenv('cmr_api')
-cmr_coll_url = '{0}/search/collections.json?{1}&page_size=1000'.format(cmr_api,os.getenv('collection_filter'))
+cmr_coll_url = '{0}/search/collections.json?{1}&page_size=1000'.format(cmr_api, os.getenv('collection_filter'))
 cmr_gran_cnt_url = '{0}/search/granules?page_size=1&collection_concept_id='.format(cmr_api)
 cmr_gran_url = '{0}/search/granules.json?page_size=5&collection_concept_id='.format(cmr_api)
 # opener class to prevent redirects (we'll redirect manually.)
 
+
 class NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
 
 # Keep 'em cookies!
 cj = cookiejar.CookieJar()
 opener = request.build_opener(request.HTTPCookieProcessor(cj), NoRedirect)
 request.install_opener(opener)
 
+
 def get_uuid():
     return str(uuid.uuid1()).lower()
+
 
 def get_creds():
     username = os.getenv('urs_user')
@@ -34,8 +44,9 @@ def get_creds():
     u_p = bytes(f"{username}:{password}", 'utf-8')
     return base64.b64encode(u_p).decode('utf-8')
 
+
 # Download an object payload
-def simple_download (url):
+def simple_download(url):
     try:
         resp = urlopen(Request(url))
         return resp.read().decode('utf-8')
@@ -43,12 +54,15 @@ def simple_download (url):
         print(f"Could not hit {url}: {E}")
     return None
 
+
 # for same-host redirects
 def add_url_host(url, new_url):
-    return "https://{0}{1}".format(url.split('/')[2],new_url)
+    return "https://{0}{1}".format(url.split('/')[2], new_url)
+
 
 def traceback_obj(new_url, e, timer):
-    return { 'url': new_url, 'code': e.code, 'duration': (time.time() - timer)*1000 }
+    return {'url': new_url, 'code': e.code, 'duration': (time.time() - timer) * 1000}
+
 
 # Empty the buffer into the trash.
 def read_file_to_devnull(resp):
@@ -62,8 +76,9 @@ def read_file_to_devnull(resp):
             f.write(chunk)
     return dl_size
 
+
 # Recursively follow redirects
-def make_request (url, origin_request = None, traceback = None):
+def make_request(url, origin_request=None, traceback=None):
     traceback = traceback or []
 
     # Watch out for redirect loops
@@ -72,7 +87,7 @@ def make_request (url, origin_request = None, traceback = None):
         return traceback, False
 
     # We can use this to trace our requests in TEA
-    headers = { 'x-origin-request-id':origin_request } if origin_request else {}
+    headers = {'x-origin-request-id': origin_request} if origin_request else {}
     # Only send Auth Creds to EDL
     if "urs.earthdata.nasa.gov/oauth/authorize" in url:
         print(".... + Adding basic auth headers")
@@ -80,7 +95,7 @@ def make_request (url, origin_request = None, traceback = None):
 
     # Start the request timer
     timer = time.time()
-    req = Request( url, headers=headers)
+    req = Request(url, headers=headers)
     try:
         resp = urlopen(req)
 
@@ -88,7 +103,7 @@ def make_request (url, origin_request = None, traceback = None):
         if e.code == 401 and e.getheader('Location'):
             # Password failed or other unknown auth problem...
             print(f"Redirecting for auth: {e.getheader('Location')}")
-            traceback.append( traceback_obj(url, e, timer) )
+            traceback.append(traceback_obj(url, e, timer))
             return traceback, False
 
         elif e.code >= 300 and e.code <= 400:
@@ -101,12 +116,12 @@ def make_request (url, origin_request = None, traceback = None):
 
             # Recursively Follow redirect
             print(f" .... Redirecting w/ {e.code} to {new_url}")
-            traceback.append( traceback_obj(url, e, timer) )
+            traceback.append(traceback_obj(url, e, timer))
 
-            return make_request( new_url, origin_request, traceback )
+            return make_request(new_url, origin_request, traceback)
         else:
             # Some other failure... 404?
-            traceback.append( traceback_obj(url, e, timer) )
+            traceback.append(traceback_obj(url, e, timer))
             print(f"Hit HTTPError....{e}")
             return traceback, False
 
@@ -117,31 +132,33 @@ def make_request (url, origin_request = None, traceback = None):
 
     # Dump the response data to /dev/null & stop the clock
     dl_size = read_file_to_devnull(resp)
-    dl_time = (time.time() - timer)*1000
+    dl_time = (time.time() - timer) * 1000
 
     # Grab the content-length header
     object_size = int(resp.getheader('content-length'))
     print(f"Downloaded {dl_size} of {object_size} in {dl_time}ms ")
-    traceback.append( {"url":url, "code":resp.code, "duration": dl_time, "size": dl_size} )
+    traceback.append({"url": url, "code": resp.code, "duration": dl_time, "size": dl_size})
 
     # Make sure we were able to read the whole file...
     if object_size != dl_size:
-         print("We did not download the whole file.... ")
-         return traceback, False
+        print("We did not download the whole file.... ")
+        return traceback, False
 
     # Everything worked!
     return traceback, True
 
+
 def send_sns(message, subject='Downoad Test Failure'):
     client = boto3.client('sns')
-    client.publish(TopicArn=os.getenv('sns_arn'),Message=message,Subject=subject)
+    client.publish(TopicArn=os.getenv('sns_arn'), Message=message, Subject=subject)
+
 
 def get_grans_from_collection(collection, cnt):
     gran_set = []
 
-    for _ in [1,2]:
+    for _ in (1, 2):
         # Pick 2 random pages of 5 granules from the collection
-        page_num = random.randint(1, min(int(cnt/5),1000))
+        page_num = random.randint(1, min(int(cnt / 5), 1000))
         gran_url = cmr_gran_url + "{0}&page_num={1}".format(collection, page_num)
 
         # Grab the granule metadata as JSON
@@ -151,13 +168,13 @@ def get_grans_from_collection(collection, cnt):
         incomplete_records = len([d for d in gran_json['feed']['entry'] if 'granule_size' not in d])
 
         if incomplete_records:
-            print ("Found {0} records without granule_size in collection {1}".format(incomplete_records, collection))
+            print("Found {0} records without granule_size in collection {1}".format(incomplete_records, collection))
 
         # Randomly select 1 href from the links
-        for rangran in [d for d in gran_json['feed']['entry'] if 'granule_size' in d and float(d['granule_size']) <= 300 ]:
+        for rangran in [d for d in gran_json['feed']['entry'] if 'granule_size' in d and float(d['granule_size']) <= 300]:
 
             # Ignore links records from json object that have '(VIEW RELATED INFORMATION)', they come from OnlineResources
-            hrefs = [l['href'] for l in rangran['links'] if ( 'inherited' not in l and l['rel'] == 'http://esipfed.org/ns/fedsearch/1.1/data#') ]
+            hrefs = [l['href'] for l in rangran['links'] if ('inherited' not in l and l['rel'] == 'http://esipfed.org/ns/fedsearch/1.1/data#')]
             if not hrefs:
                 print("... No downloads in {0}".format(rangran))
             random_file = random.choice(hrefs)
@@ -165,18 +182,19 @@ def get_grans_from_collection(collection, cnt):
             # Make sure we don't do the same file twice!
             if random_file not in gran_set:
                 # This is our download!
-                print("... adding {0} from {1} in {2} ...".format(random_file, rangran['id'], collection ))
+                print("... adding {0} from {1} in {2} ...".format(random_file, rangran['id'], collection))
                 gran_set.append(random_file)
 
     return gran_set
+
 
 def get_cmr_granules():
 
     # query CMR for collections, then grab the URLS from some random granules
     granule_url_set = []
 
-    print ("... Gathering 200+ random granules ....")
-    collections = json.loads(simple_download( cmr_coll_url ))
+    print("... Gathering 200+ random granules ....")
+    collections = json.loads(simple_download(cmr_coll_url))
     collections = [d['id'] for d in collections['feed']['entry']]
     random.shuffle(collections)
 
@@ -188,23 +206,24 @@ def get_cmr_granules():
             continue
 
         # grab the hit count for the collection
-        coll_count_xml = simple_download( cmr_gran_cnt_url+collection )
+        coll_count_xml = simple_download(cmr_gran_cnt_url + collection)
         cnt = int(re.findall(r'\<hits\>(\d+)\<\/hits\>', coll_count_xml)[0])
 
         # Only sample large collections
         if cnt > 10000:
-            print ("   ... collection {0} has {1} granule ... ".format(collection, cnt))
+            print("   ... collection {0} has {1} granule ... ".format(collection, cnt))
             granule_url_set += get_grans_from_collection(collection, cnt)
 
         # stop after we've found 200 "random granules"
-        if len ( granule_url_set ) >= 200:
-            print ( "... Found enough granules... ")
+        if len(granule_url_set) >= 200:
+            print("... Found enough granules... ")
             break
 
     # Choose 20 of the random 200!
-    products = random.choices( granule_url_set, k=20)
-    print ("... Selected the following granules: {0}".format(products))
+    products = random.choices(granule_url_set, k=20)
+    print("... Selected the following granules: {0}".format(products))
     return products
+
 
 # Format the traceback
 def format_tb(tb):
@@ -214,7 +233,8 @@ def format_tb(tb):
         tb_rpt += f"  +{'-'*(cnt+1)}> {short_url} w/ {stop['code']} for {stop['duration']}\n"
     return tb_rpt
 
-def summarize_everything(good,bad,origin_request):
+
+def summarize_everything(good, bad, origin_request):
     final_report = ""
 
     if bad:
@@ -224,8 +244,8 @@ def summarize_everything(good,bad,origin_request):
     final_report += "\nGood Downloads:\n"
 
     for g in good:
-        size_mb = g['dl_size'] / (1024*1024)
-        rate =  size_mb / ( g['work_time']/1000 )
+        size_mb = g['dl_size'] / (1024 * 1024)
+        rate = size_mb / (g['work_time'] / 1000)
         final_report += f"  - {g['url']}: {size_mb:.1f}MB @ {rate:.01f}MB/sec (overhead: {g['overhead']:.01f}ms)\n"
 
     if bad:
@@ -240,6 +260,7 @@ def summarize_everything(good,bad,origin_request):
     final_report += f"\nx-origin-request-id was {origin_request}\n"
     return final_report
 
+
 def lambda_handler(_event, _context):
     # For tracking this run in TEA logs.
     origin_request = get_uuid()
@@ -252,24 +273,24 @@ def lambda_handler(_event, _context):
         random_downloads = get_cmr_granules()
 
         for url in random_downloads:
-            print (f"Downloading {url}...")
+            print(f"Downloading {url}...")
 
             timer = time.time()
             tb, ok = make_request(url, origin_request)
-            duration = (time.time() - timer)*1000
+            duration = (time.time() - timer) * 1000
 
             if ok:
                 work_time = tb[-1]['duration']
                 dl_size = tb[-1]['size']
                 overhead = duration - work_time
                 print(f"Successfully download {url}: spent {work_time}ms downloading {dl_size}b (overhead: {overhead})")
-                good.append ( {"url":url, "work_time": work_time, "dl_size": dl_size, "overhead": overhead, "tb": tb} )
+                good.append({"url": url, "work_time": work_time, "dl_size": dl_size, "overhead": overhead, "tb": tb})
 
             else:
-                bad.append ( {"url":url, "overhead": duration, "tb": tb, "code": tb[-1]['code'] } )
+                bad.append({"url": url, "overhead": duration, "tb": tb, "code": tb[-1]['code']})
                 print(f"{url} was NOT successful... spent {duration}ms, result was {tb[-1]['code']}")
 
-        summary = summarize_everything(good,bad,origin_request)
+        summary = summarize_everything(good, bad, origin_request)
 
         if bad:
             send_sns(message=summary, subject="Failure!")
@@ -278,7 +299,7 @@ def lambda_handler(_event, _context):
             return True
 
     except Exception as E:
-        print ("problem running code: {0}".format(E))
+        print("problem running code: {0}".format(E))
         send_sns(message=f"There was a problem running download report: {E}", subject="Error!")
         raise (E)
 

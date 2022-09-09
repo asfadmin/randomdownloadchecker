@@ -4,6 +4,7 @@ import os
 import random
 import re
 import time
+import traceback
 import uuid
 from http import cookiejar
 from urllib import request
@@ -60,7 +61,7 @@ def add_url_host(url, new_url):
     return "https://{0}{1}".format(url.split('/')[2], new_url)
 
 
-def traceback_obj(new_url, e, timer):
+def trace_obj(new_url, e, timer):
     return {'url': new_url, 'code': e.code, 'duration': (time.time() - timer) * 1000}
 
 
@@ -78,13 +79,13 @@ def read_file_to_devnull(resp):
 
 
 # Recursively follow redirects
-def make_request(url, origin_request=None, traceback=None):
-    traceback = traceback or []
+def make_request(url, origin_request=None, trace=None):
+    trace = trace or []
 
     # Watch out for redirect loops
-    if len(traceback) > 6:
-        print(f"TOO MANY REDIRECTS: {traceback}")
-        return traceback, False
+    if len(trace) > 6:
+        print(f"TOO MANY REDIRECTS: {trace}")
+        return trace, False
 
     # We can use this to trace our requests in TEA
     headers = {'x-origin-request-id': origin_request} if origin_request else {}
@@ -103,8 +104,8 @@ def make_request(url, origin_request=None, traceback=None):
         if e.code == 401 and e.getheader('Location'):
             # Password failed or other unknown auth problem...
             print(f"Redirecting for auth: {e.getheader('Location')}")
-            traceback.append(traceback_obj(url, e, timer))
-            return traceback, False
+            trace.append(trace_obj(url, e, timer))
+            return trace, False
 
         elif e.code >= 300 and e.code <= 400:
             # Redirect response....
@@ -116,19 +117,19 @@ def make_request(url, origin_request=None, traceback=None):
 
             # Recursively Follow redirect
             print(f" .... Redirecting w/ {e.code} to {new_url}")
-            traceback.append(traceback_obj(url, e, timer))
+            trace.append(trace_obj(url, e, timer))
 
-            return make_request(new_url, origin_request, traceback)
+            return make_request(new_url, origin_request, trace)
         else:
             # Some other failure... 404?
-            traceback.append(traceback_obj(url, e, timer))
+            trace.append(trace_obj(url, e, timer))
             print(f"Hit HTTPError....{e}")
-            return traceback, False
+            return trace, False
 
     except Exception as E:
         # DNS problem?
         print(f"Could not hit {url}: {E}")
-        return traceback, False
+        return trace, False
 
     # Dump the response data to /dev/null & stop the clock
     dl_size = read_file_to_devnull(resp)
@@ -137,15 +138,15 @@ def make_request(url, origin_request=None, traceback=None):
     # Grab the content-length header
     object_size = int(resp.getheader('content-length'))
     print(f"Downloaded {dl_size} of {object_size} in {dl_time}ms ")
-    traceback.append({"url": url, "code": resp.code, "duration": dl_time, "size": dl_size})
+    trace.append({"url": url, "code": resp.code, "duration": dl_time, "size": dl_size})
 
     # Make sure we were able to read the whole file...
     if object_size != dl_size:
         print("We did not download the whole file.... ")
-        return traceback, False
+        return trace, False
 
     # Everything worked!
-    return traceback, True
+    return trace, True
 
 
 def send_sns(message, subject='Downoad Test Failure'):
@@ -225,8 +226,8 @@ def get_cmr_granules():
     return products
 
 
-# Format the traceback
-def format_tb(tb):
+# Format the trace
+def format_trace(tb):
     tb_rpt = ""
     for cnt, stop in enumerate(tb):
         short_url = stop['url'].split('?')[0]
@@ -252,9 +253,9 @@ def summarize_everything(good, bad, origin_request):
         final_report += "\nFailed Downloads:\n"
     for b in bad:
         final_report += f"  - {b['url']} failed w/ {b['code']} (overhead: {b['overhead']:.01f}ms)\n"
-        # If we have a redirect, add the traceback
+        # If we have a redirect, add the trace
         if len(b['tb']) > 1:
-            final_report += format_tb(b['tb']) + "\n"
+            final_report += format_trace(b['tb']) + "\n"
 
     # This value can be used to search the TEA logs
     final_report += f"\nx-origin-request-id was {origin_request}\n"
@@ -300,7 +301,7 @@ def lambda_handler(_event, _context):
 
     except Exception as E:
         print("problem running code: {0}".format(E))
-        send_sns(message=f"There was a problem running download report: {E}", subject="Error!")
+        send_sns(message=f"There was a problem running download report: {traceback.format_exc()}", subject="Error!")
         raise (E)
 
     return False

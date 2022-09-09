@@ -251,7 +251,7 @@ def summarize_everything(good, bad, origin_request):
     if bad:
         final_report += "\nFailed Downloads:\n"
     for b in bad:
-        final_report += f"  - {b['url']} failed w/ {b['code']} waisting {b['overhead']:.01f}ms\n"
+        final_report += f"  - {b['url']} failed w/ {b['code']} (overhead: {b['overhead']:.01f}ms)\n"
         # If we have a redirect, add the traceback
         if len(b['tb']) > 1:
             final_report += format_tb(b['tb']) + "\n"

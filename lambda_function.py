@@ -288,7 +288,7 @@ def lambda_handler(_event, _context):
                 good.append({"url": url, "work_time": work_time, "dl_size": dl_size, "overhead": overhead, "tb": tb})
 
             else:
-                bad.append({"url": url, "overhead": duration, "tb": tb, "code": tb[-1]['code']})
+                bad.append({"url": url, "overhead": duration, "tb": tb, "code": tb[-1]["code"] if tb else None})
                 print(f"{url} was NOT successful... spent {duration}ms, result was {tb[-1]['code']}")
 
         summary = summarize_everything(good, bad, origin_request)
